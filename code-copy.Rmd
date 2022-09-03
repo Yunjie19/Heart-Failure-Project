@@ -1,0 +1,283 @@
+---
+title: "R Notebook"
+output:
+  html_document
+---
+
+
+```{r}
+rm(list = ls())
+```
+
+
+```{r}
+library(caret)
+library("rms")
+library(tableone)
+library(ggplot2)
+library(survminer)
+library(lmtest)
+```
+
+#### 研究介绍
+#####Cardiovascular diseases (CVDs) are the number 1 cause of death globally, taking an estimated 17.9 million lives each year, which accounts for 31% of all deaths worlwide. 
+##### Heart failure is a common event caused by CVDs and this dataset contains 12 features that can be used to predict mortality by heart failure.
+##### Most cardiovascular diseases can be prevented by addressing behavioural risk factors such as tobacco use, unhealthy diet and obesity, physical inactivity and harmful use of alcohol using population-wide strategies.
+
+##### People with cardiovascular disease or who are at high cardiovascular risk (due to the presence of one or more risk factors such as hypertension, diabetes, hyperlipidaemia or already established disease) need early detection and management wherein a machine learning model can be of great help.
+
+
+#### 主要工作：主要做了以下工作：1.数据获取；2.数据基线特征统计；3.KM曲线法绘制生存曲线；4.KM曲线进行单因素分析；5.Cox模型进行单因素分析；6.Cox多因素分析；7.Cox模型比例风险假设检验；8.AFT模型分析；9.WEIBULL分布检验。
+
+
+#### 数据介绍
+##### （根据数据获取网站简单介绍）（可以附上数据基线特征统计结果）
+
+
+```{r}
+data <- read.csv("heart_failure_clinical_records_dataset.csv")
+data$anaemia <- factor(data$anaemia)
+data$diabetes <- factor(data$diabetes)
+data$high_blood_pressure <- factor(data$high_blood_pressure)
+data$sex <- factor(data$sex)
+data$smoking <- factor(data$smoking)
+
+names(data)
+```
+
+
+##### 数据集中患者基线特征统计
+```{r}
+cols <- c("age", "anaemia", "creatinine_phosphokinase", "diabetes",
+          "ejection_fraction", "high_blood_pressure", "platelets", "serum_creatinine",
+          "serum_sodium", "sex", "smoking")
+print(CreateTableOne(var = cols,
+                     factorVars = c("anaemia", "diabetes", "high_blood_pressure", "sex", "smoking"), 
+                     # strata = "residence",
+                     data = data),
+      showAllLevels = TRUE,
+      quote = TRUE)
+
+```
+
+
+##### KM曲线绘制生存曲线
+```{r}
+surv.km <- survfit(Surv(time, DEATH_EVENT) ~ 1, data = data) #KM estimate
+summary(surv.km, times = 1:10)
+```
+
+
+```{r}
+surv.na <- survfit(Surv(time, DEATH_EVENT) ~ 1, data = data, type = "fl") #NA estimate
+summary(surv.na, times = 1:10)
+```
+
+
+##### KM和NA估计结果对比：没有差异
+```{r}
+plot(surv.km$time, surv.km$surv, type="s", xlab="time", ylab="Survival") #KM estimate
+lines(surv.na$time, surv.na$surv, type="s", lty=2) #NA estimate
+legend("topright", legend=c("KM estimate","NA estimate"), lty=1:2)
+title(main="use survfit function ")
+```
+
+
+```{r}
+
+feat_con <- c("age", "creatinine_phosphokinase", "ejection_fraction", "platelets", "serum_creatinine", "serum_sodium")
+feat_cat <- setdiff(cols, feat_con)
+cols_exclude <- setdiff(names(data), cols)
+
+feat_cat
+cols_exclude
+```
+
+
+#### KM曲线法分析每个因素与生存时间的关系
+##### anaemia
+```{r}
+ggsurvplot(survfit(Surv(time, DEATH_EVENT) ~ anaemia, data = data, start.time = 0),
+           data = data,
+           pval = TRUE,
+           censor.shape = "", 
+           legend = "top", 
+           break.x.by = 12,
+           font.tickslab = 10,
+           size = 1.2)
+```
+
+
+##### diabetes
+```{r}
+ggsurvplot(survfit(Surv(time, DEATH_EVENT) ~ diabetes, data = data, start.time = 0),
+           data = data,
+           pval = TRUE,
+           censor.shape = "", 
+           legend = "top", 
+           break.x.by = 12,
+           font.tickslab = 10,
+           size = 1.2)
+```
+
+
+##### high_blood_pressure
+```{r}
+ggsurvplot(survfit(Surv(time, DEATH_EVENT) ~ high_blood_pressure, data = data, start.time = 0),
+           data = data,
+           pval = TRUE,
+           censor.shape = "", 
+           legend = "top", 
+           break.x.by = 12,
+           font.tickslab = 10,
+           size = 1.2)
+```
+
+
+##### sex
+```{r}
+ggsurvplot(survfit(Surv(time, DEATH_EVENT) ~ sex, data = data, start.time = 0),
+           data = data,
+           pval = TRUE,
+           censor.shape = "", 
+           legend = "top", 
+           break.x.by = 12,
+           font.tickslab = 10,
+           size = 1.2)
+```
+
+
+##### smoking
+```{r}
+ggsurvplot(survfit(Surv(time, DEATH_EVENT) ~ smoking, data = data, start.time = 0),
+           data = data,
+           pval = TRUE,
+           censor.shape = "", 
+           legend = "top", 
+           break.x.by = 12,
+           font.tickslab = 10,
+           size = 1.2)
+```
+
+
+
+
+#### Cox model 单因素分析
+##### UNIVARIATE MODELS
+```{r}
+univ.formulas <- sapply(cols,
+                        function(x) as.formula(paste('Surv(time, DEATH_EVENT) ~ ', x)))
+# univ.formulas                                                            
+
+univ.models <- lapply(univ.formulas,
+                      function(x) {
+                        coxph(x, data = data)
+                        })
+
+# univ.models ### coef就是β，就是回归系数；exp(coef)指的是HR风险比；每一个协变量的COX回归结果；
+univ.results <- lapply(univ.models, ###创建提取批量分析结果的函数
+                       function(x) {
+                         return(cbind(exp(coef(x)), exp(confint(x)), round(coef(summary(x))[,5], 4)))
+                       })
+print(univ.results, quote = TRUE)
+```
+
+ 
+#### MULTIVARIATE MODELS
+```{r}
+options(contrasts=c("contr.treatment", "contr.treatment"))
+dd <- datadist(data)
+options(datadist='dd')
+
+# Full model
+full.model.mt <- cph(Surv(time, DEATH_EVENT) ~ age + ejection_fraction + serum_creatinine + serum_sodium + anaemia + high_blood_pressure +
+                       creatinine_phosphokinase + platelets + diabetes + sex + smoking, 
+                       data = data, x = TRUE, y = TRUE)
+part.model.mt <- cph(Surv(time, DEATH_EVENT) ~ age + ejection_fraction + serum_creatinine + serum_sodium + anaemia + high_blood_pressure,
+                       data = data, x = TRUE, y = TRUE)
+
+```
+
+
+##### 符合比例风险假设
+```{r}
+cox.zph(full.model.mt)
+print("------------------------------------------------")
+cox.zph(part.model.mt)
+```
+
+
+```{r}
+anova(full.model.mt)
+print("------------------------------------------------")
+anova(part.model.mt)
+print("------------------------------------------------")
+lrtest(full.model.mt, part.model.mt)
+```
+
+
+#### 最终模型
+```{r}
+model.cox <- coxph(Surv(time, DEATH_EVENT) ~ age + ejection_fraction + serum_creatinine + serum_sodium + anaemia + high_blood_pressure,
+                   data = data, x = TRUE, y = TRUE)
+summary(model.cox)
+```
+
+
+#### AFT model
+```{r}
+### ----------------------- AFT model ------------------------------
+aftmodel.full <- survreg(Surv(time, DEATH_EVENT) ~ age + ejection_fraction + serum_creatinine + serum_sodium + anaemia + high_blood_pressure +
+                       creatinine_phosphokinase + platelets + diabetes + sex + smoking,
+                     dist = 'weibull', data = data)
+summary(aftmodel.full)
+```
+
+
+```{r}
+### ----------------------- AFT model ------------------------------
+aftmodel.part <- survreg(Surv(time, DEATH_EVENT) ~ age + ejection_fraction + serum_creatinine + serum_sodium + anaemia + high_blood_pressure,
+                     dist = 'weibull', data = data)
+summary(aftmodel.part)
+```
+
+
+##### since the log(scale) has p-value > 0.05. It seems a weibull assumption is not appriate.
+
+
+#### Model Assessment:
+
+```{r}
+## linear predictor \beta * x
+linpred <- aftmodel.full$linear.predictor  
+# Residuals (transfer residual to be the survival time scale, not log(time) case)
+cs.res <- exp(-aftmodel.full$linear.predictor/aftmodel.full$scale)* (Surv(data$time, data$DEATH_EVENT)[,1])^(1/aftmodel.full$scale)
+cs.fit <- survfit(Surv(cs.res, data$DEATH_EVENT) ~ 1, type="fh2")
+cs.fit <- survfit(Surv(cs.res, data$DEATH_EVENT) ~ 1, type="fleming-harrington")
+
+
+plot(log(cs.fit$time), log(-log(cs.fit$surv)), type="s")  ## if Weibull is OK, this will have a linear pattern
+```
+
+
+
+```{r}
+## linear predictor \beta * x
+linpred <- aftmodel.part$linear.predictor  
+# Residuals (transfer residual to be the survival time scale, not log(time) case)
+cs.res <- exp(-aftmodel.part$linear.predictor/aftmodel.part$scale)* (Surv(data$time, data$DEATH_EVENT)[,1])^(1/aftmodel.part$scale)
+cs.fit <- survfit(Surv(cs.res, data$DEATH_EVENT) ~ 1, type="fh2")
+cs.fit <- survfit(Surv(cs.res, data$DEATH_EVENT) ~ 1, type="fleming-harrington")
+
+
+plot(log(cs.fit$time), log(-log(cs.fit$surv)), type="s")  ## if Weibull is OK, this will have a linear pattern
+```
+
+
+
+
+
+
+
+
+
